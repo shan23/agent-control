@@ -5,6 +5,8 @@ import secrets
 from functools import cached_property
 from typing import Any
 
+from agent_control_models import JSONObject
+from agent_control_telemetry import DEFAULT_CONTROL_EVENT_SINK_NAME
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -204,8 +206,37 @@ class ObservabilitySettings(BaseSettings):
     # Enable/disable observability features
     enabled: bool = True
 
+    # Event sink selection. These use server-specific env names so SDK sink
+    # selections do not leak into server startup in shared deployments.
+    server_sink_name: str = _env_alias_field(
+        DEFAULT_CONTROL_EVENT_SINK_NAME,
+        "AGENT_CONTROL_SERVER_OBSERVABILITY_SINK_NAME",
+    )
+    server_sink_config: JSONObject = _env_alias_field(
+        {},
+        "AGENT_CONTROL_SERVER_OBSERVABILITY_SINK_CONFIG",
+    )
+
     # Stdout logging of events
     stdout: bool = False
+
+    @property
+    def sink_name(self) -> str:
+        """Compatibility accessor for the configured server sink name."""
+        return self.server_sink_name
+
+    @sink_name.setter
+    def sink_name(self, value: str) -> None:
+        self.server_sink_name = value
+
+    @property
+    def sink_config(self) -> JSONObject:
+        """Compatibility accessor for the configured server sink config."""
+        return self.server_sink_config
+
+    @sink_config.setter
+    def sink_config(self, value: JSONObject) -> None:
+        self.server_sink_config = value
 
 
 class LoggingSettings(BaseSettings):
