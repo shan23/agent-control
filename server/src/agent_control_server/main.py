@@ -273,9 +273,10 @@ app.include_router(
     dependencies=[Depends(require_api_key)],
 )
 app.include_router(
+    # Endpoint dependencies handle auth; this advertises X-API-Key.
     control_router,
     prefix=api_v1_prefix,
-    dependencies=[Depends(require_api_key)],
+    dependencies=[Depends(get_api_key_from_header)],
 )
 app.include_router(
     # The auth framework on each endpoint owns authentication and
@@ -300,9 +301,10 @@ app.include_router(
     dependencies=[Depends(get_api_key_from_header)],
 )
 app.include_router(
+    # Endpoint dependencies handle auth; this advertises X-API-Key.
     control_template_router,
     prefix=api_v1_prefix,
-    dependencies=[Depends(require_api_key)],
+    dependencies=[Depends(get_api_key_from_header)],
 )
 app.include_router(
     evaluation_router,
@@ -344,6 +346,17 @@ def custom_openapi() -> dict[str, Any]:
     schemas = openapi_schema.get("components", {}).get("schemas", {})
     if "JSONValue" in schemas:
         schemas["JSONValue"] = {"description": "Any JSON value"}
+
+    # This route is intentionally public metadata. FastAPI still emits inherited
+    # API-key security for it, so patch only this operation in the generated spec.
+    controls_schema_path = f"{api_v1_prefix}/controls/schema"
+    controls_schema_operation = (
+        openapi_schema.get("paths", {})
+        .get(controls_schema_path, {})
+        .get("get")
+    )
+    if isinstance(controls_schema_operation, dict):
+        controls_schema_operation["security"] = []
 
     app.openapi_schema = openapi_schema
     return app.openapi_schema
