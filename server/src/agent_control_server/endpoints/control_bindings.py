@@ -26,7 +26,6 @@ from ..auth_framework import Operation, Principal, require_operation
 from ..db import get_async_db
 from ..errors import BadRequestError
 from ..models import ControlBinding
-from ..namespace import get_namespace_key
 from ..services.control_bindings import ControlBindingsService
 
 router = APIRouter(prefix="/control-bindings", tags=["control-bindings"])
@@ -94,26 +93,21 @@ def _to_response(binding: ControlBinding) -> GetControlBindingResponse:
 async def create_control_binding(
     request: CreateControlBindingRequest,
     db: AsyncSession = Depends(get_async_db),
-    _principal: Principal = Depends(
+    principal: Principal = Depends(
         require_operation(
             Operation.CONTROL_BINDINGS_WRITE,
             context_builder=_binding_body_context,
         )
     ),
-    namespace_key: str = Depends(get_namespace_key),
 ) -> CreateControlBindingResponse:
     """Attach a control to an opaque external target.
 
-    Each binding row is scoped to the request namespace as resolved by
-    ``get_namespace_key``. The auth chain still runs via
-    ``require_operation`` for authentication and authorization, but the
-    storage namespace is taken from the same resolver the rest of the
-    server uses so binding writes and runtime reads stay in lockstep
-    until auth-derived namespace resolution lands across every endpoint.
+    Each binding row is scoped to the namespace associated with the
+    authenticated request.
     """
     service = ControlBindingsService(db)
     binding = await service.create_binding(
-        namespace_key=namespace_key,
+        namespace_key=principal.namespace_key,
         target_type=request.target_type,
         target_id=request.target_id,
         control_id=request.control_id,
@@ -148,20 +142,18 @@ async def list_control_bindings(
     target_id: str | None = None,
     control_id: int | None = None,
     db: AsyncSession = Depends(get_async_db),
-    _principal: Principal = Depends(
+    principal: Principal = Depends(
         require_operation(
             Operation.CONTROL_BINDINGS_READ,
             context_builder=_binding_list_context,
         )
     ),
-    namespace_key: str = Depends(get_namespace_key),
 ) -> ListControlBindingsResponse:
     """Return bindings in the request namespace with optional filters and
     cursor-based pagination. Bindings are ordered by ID descending
     (newest first). The cursor is opaque to clients: pass back the
     ``next_cursor`` value verbatim to fetch the following page. The
-    storage namespace is resolved by ``get_namespace_key`` so this
-    listing stays in lockstep with the rest of the server's reads.
+    storage namespace is resolved from the authenticated request.
     """
     parsed_cursor: int | None
     if cursor is None:
@@ -177,7 +169,7 @@ async def list_control_bindings(
             ) from exc
     service = ControlBindingsService(db)
     page = await service.list_bindings(
-        namespace_key=namespace_key,
+        namespace_key=principal.namespace_key,
         cursor=parsed_cursor,
         limit=limit,
         target_type=target_type,
@@ -204,21 +196,21 @@ async def list_control_bindings(
 async def get_control_binding(
     binding_id: int,
     db: AsyncSession = Depends(get_async_db),
-    _principal: Principal = Depends(require_operation(Operation.CONTROL_BINDINGS_READ)),
-    namespace_key: str = Depends(get_namespace_key),
+    principal: Principal = Depends(require_operation(Operation.CONTROL_BINDINGS_READ)),
 ) -> GetControlBindingResponse:
     """Read a single control binding by surrogate ID.
 
     Authorization is namespace-wide: the binding's target identifiers
-    are not forwarded to the upstream because they are only discoverable
-    after the row is loaded, and ``require_operation`` is single-pass.
+    are not available until after the row is loaded.
     Callers whose authorization model requires per-target permissions
     should use the natural-key endpoints (``PUT /by-key``,
     ``POST /by-key:delete``) and the target-filtered list endpoint, all
-    of which forward ``(target_type, target_id)`` to the authorizer.
+    of which include ``(target_type, target_id)`` in the request context.
     """
     service = ControlBindingsService(db)
-    binding = await service.get_binding_or_404(namespace_key=namespace_key, binding_id=binding_id)
+    binding = await service.get_binding_or_404(
+        namespace_key=principal.namespace_key, binding_id=binding_id
+    )
     return _to_response(binding)
 
 
@@ -232,19 +224,18 @@ async def patch_control_binding(
     binding_id: int,
     request: PatchControlBindingRequest,
     db: AsyncSession = Depends(get_async_db),
-    _principal: Principal = Depends(require_operation(Operation.CONTROL_BINDINGS_WRITE)),
-    namespace_key: str = Depends(get_namespace_key),
+    principal: Principal = Depends(require_operation(Operation.CONTROL_BINDINGS_WRITE)),
 ) -> PatchControlBindingResponse:
     """Update the ``enabled`` flag on a control binding.
 
     See the GET-by-id docstring for the authorization scope: this route
     is namespace-wide because the target identifiers are not available
     before the binding is loaded. Use ``PUT /by-key`` for target-scoped
-    upserts that forward the target to the authorizer.
+    upserts that include the target in the request context.
     """
     service = ControlBindingsService(db)
     binding = await service.set_enabled(
-        namespace_key=namespace_key,
+        namespace_key=principal.namespace_key,
         binding_id=binding_id,
         enabled=request.enabled,
     )
@@ -261,18 +252,17 @@ async def patch_control_binding(
 async def delete_control_binding(
     binding_id: int,
     db: AsyncSession = Depends(get_async_db),
-    _principal: Principal = Depends(require_operation(Operation.CONTROL_BINDINGS_WRITE)),
-    namespace_key: str = Depends(get_namespace_key),
+    principal: Principal = Depends(require_operation(Operation.CONTROL_BINDINGS_WRITE)),
 ) -> DeleteControlBindingResponse:
     """Delete a control binding by surrogate ID.
 
     See the GET-by-id docstring for the authorization scope: this route
     is namespace-wide because the target identifiers are not available
     before the binding is loaded. Use ``POST /by-key:delete`` for
-    target-scoped detach that forwards the target to the authorizer.
+    target-scoped detach that includes the target in the request context.
     """
     service = ControlBindingsService(db)
-    await service.delete_binding(namespace_key=namespace_key, binding_id=binding_id)
+    await service.delete_binding(namespace_key=principal.namespace_key, binding_id=binding_id)
     await db.commit()
     return DeleteControlBindingResponse(success=True)
 
@@ -286,13 +276,12 @@ async def delete_control_binding(
 async def upsert_control_binding_by_key(
     request: UpsertControlBindingRequest,
     db: AsyncSession = Depends(get_async_db),
-    _principal: Principal = Depends(
+    principal: Principal = Depends(
         require_operation(
             Operation.CONTROL_BINDINGS_WRITE,
             context_builder=_binding_body_context,
         )
     ),
-    namespace_key: str = Depends(get_namespace_key),
 ) -> UpsertControlBindingResponse:
     """Idempotent attach using ``(target_type, target_id, control_id)`` as the
     natural key. Updates ``enabled`` on an existing match; creates a new row
@@ -300,7 +289,7 @@ async def upsert_control_binding_by_key(
     """
     service = ControlBindingsService(db)
     binding, created = await service.upsert_by_natural_key(
-        namespace_key=namespace_key,
+        namespace_key=principal.namespace_key,
         target_type=request.target_type,
         target_id=request.target_id,
         control_id=request.control_id,
@@ -324,20 +313,19 @@ async def upsert_control_binding_by_key(
 async def delete_control_binding_by_key(
     request: DeleteControlBindingByKeyRequest,
     db: AsyncSession = Depends(get_async_db),
-    _principal: Principal = Depends(
+    principal: Principal = Depends(
         require_operation(
             Operation.CONTROL_BINDINGS_WRITE,
             context_builder=_binding_body_context,
         )
     ),
-    namespace_key: str = Depends(get_namespace_key),
 ) -> DeleteControlBindingByKeyResponse:
     """Idempotent detach by natural key. Returns ``deleted=False`` when no
     matching binding exists.
     """
     service = ControlBindingsService(db)
     deleted = await service.delete_by_natural_key(
-        namespace_key=namespace_key,
+        namespace_key=principal.namespace_key,
         target_type=request.target_type,
         target_id=request.target_id,
         control_id=request.control_id,

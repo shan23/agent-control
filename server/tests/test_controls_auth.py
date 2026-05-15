@@ -4,13 +4,11 @@ from __future__ import annotations
 
 import uuid
 
-import pytest
+from agent_control_server.auth_framework import set_authorizer
+from agent_control_server.auth_framework.providers import NoAuthProvider
 from fastapi.testclient import TestClient
 
-from agent_control_server.config import auth_settings
-
 from .utils import VALID_CONTROL_PAYLOAD
-
 
 _CONTROLS_URL = "/api/v1/controls"
 _TEMPLATES_URL = "/api/v1/control-templates"
@@ -244,7 +242,7 @@ def test_non_admin_cannot_validate_control_data(
         json={"data": VALID_CONTROL_PAYLOAD},
     )
 
-    # Then: validation requires CONTROLS_CREATE.
+    # Then: validation is admin-only
     assert resp.status_code == 403, resp.text
 
 
@@ -318,21 +316,16 @@ def test_unauthenticated_cannot_render_template(
 
 
 # ---------------------------------------------------------------------------
-# No-auth deployment mode: api_key_enabled=False bypasses every gate.
+# No-auth deployment mode: explicit provider bypasses every gate.
 # ---------------------------------------------------------------------------
 
 
 def test_no_auth_mode_allows_writes_without_credentials(
     unauthenticated_client: TestClient,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """When ``api_key_enabled`` is False, the ``HeaderAuthProvider``
-    short-circuits to a non-admin ``Principal`` for every operation,
-    including admin-level writes. This pins the "no auth" deployment
-    path so a future refactor can't silently start enforcing.
-    """
-    # Given: api_key_enabled is False (single-tenant OSS dev mode)
-    monkeypatch.setattr(auth_settings, "api_key_enabled", False)
+    """Explicit no-auth provider allows every operation without credentials."""
+    # Given: the request-auth framework is in no-auth mode
+    set_authorizer(NoAuthProvider())
 
     # When: an unauthenticated client creates a control
     resp = unauthenticated_client.put(
