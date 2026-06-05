@@ -2,6 +2,24 @@
 
 <!-- version list -->
 
+## v8.0.0 (2026-06-05)
+
+### Bug Fixes
+
+- **evaluators**: Remove Luna2 evaluator
+  ([#234](https://github.com/agentcontrol/agent-control/pull/234),
+  [`ccc4fc6`](https://github.com/agentcontrol/agent-control/commit/ccc4fc6d4dc3228169d9db0178d14596349739f1))
+
+- **server**: Harden auth upstream connection handling
+  ([#235](https://github.com/agentcontrol/agent-control/pull/235),
+  [`16d0115`](https://github.com/agentcontrol/agent-control/commit/16d0115a53289d34b92952210abe7b704ac9b10b))
+
+### Chores
+
+- **release**: Ts sdk v2.6.0 [skip ci]
+  ([`a953da5`](https://github.com/agentcontrol/agent-control/commit/a953da57638da489a5e5f448c3ee13c170487de2))
+
+
 ## v7.10.0 (2026-05-27)
 
 ### Bug Fixes
